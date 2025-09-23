@@ -75,7 +75,7 @@ jobs:
         uses: vlaurin/action-ghcr-prune@main
         with:
           token: ${{ secrets.PRUNE_TOKEN }}
-          organization: fazaamal
+          user: fazaamal
           container: hello-world-express
           prune-tags-regexes: ^sha\-([a-f0-9]{7})
           keep-tags: |
