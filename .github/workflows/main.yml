@@ -72,18 +72,44 @@ jobs:
     runs-on: ubuntu-latest
     needs: ghcr
     steps:
-      - name: Prune images
+      # - name: Prune images
+      #   uses: emmahsax/action-ghcr-prune@main
+      #   with:
+      #     token: ${{ secrets.PRUNE_TOKEN }}
+      #     user: fazaamal
+      #     container: hello-world-express
+      #     prune-tags-regexes: ^sha\-([a-f0-9]{7})
+      #     keep-tags: |
+      #       main
+      #     keep-last: 1
+      #     prune-untagged: true # prune untagged
+
+      # Delete all tagged packages except `latest` and the last other 5 (so 6 tagged packages left over
+      # at the end). Also delete the untagged variants of the tagged packages that are deleted.
+      - name: Delete Old Tagged Packages
         uses: emmahsax/action-ghcr-prune@main
         with:
           token: ${{ secrets.PRUNE_TOKEN }}
-          user: fazaamal
           container: hello-world-express
-          prune-tags-regexes: ^sha\-([a-f0-9]{7})
-          keep-tags: |
-            main
+          dry-run: true
           keep-last: 1
-          prune-untagged: true # prune untagged
+          keep-tags-regexes: |
+            main
+          user: fazaamal
+          prune-tags-regexes: ^sha\-([a-f0-9]{7})
+          remove-multi-platform: true
 
+      # After the first step finishes, then go through and delete all other untagged packages
+      # UNLESS they are a part of a multi-arch image that is left around from the first step.
+      - name: Delete Old Untagged Packages
+        uses: emmahsax/action-ghcr-prune@main
+        with:
+          token: ${{ secrets.PRUNE_TOKEN }}
+          container: hello-world-express
+          dry-run: true
+          keep-last: 0
+          user: fazaamal
+          prune-untagged: true
 
   # deploy:
   #   runs-on: ubuntu-latest
