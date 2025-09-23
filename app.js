@@ -8,7 +8,7 @@ app.use(express.json())
 // Hello World route
 app.get("/", (req, res) => {
   res.json({
-    message: "Hello World from Express.js!",
+    message: "Hello World from Express.js! By Faza and AI",
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
   })
