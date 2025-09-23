@@ -73,7 +73,7 @@ jobs:
     needs: ghcr
     steps:
       - name: Prune images
-        uses: vlaurin/action-ghcr-prune@main
+        uses: emmahsax/action-ghcr-prune@main
         with:
           token: ${{ secrets.PRUNE_TOKEN }}
           user: fazaamal
