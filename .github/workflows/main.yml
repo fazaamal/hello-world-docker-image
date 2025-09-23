@@ -36,7 +36,7 @@ jobs:
         with:
           username: "${{ github.actor }}"
           password: "${{ secrets.GITHUB_TOKEN }}"
-          image-name: "hello-world-express"
+          image-name: "fazaamal/hello-world-express"
           github-sha: "${{ github.sha }}"
           action: "${{ github.event.action }}"
           merged: "${{ github.event.pull_request.merged }}"
@@ -57,6 +57,7 @@ jobs:
         uses: vlaurin/action-ghcr-prune@main
         with:
           token: ${{ secrets.PRUNE_TOKEN }}
+          organization: fazaamal
           container: hello-world-express
           prune-tags-regexes: ^sha\-([a-f0-9]{7})
           keep-tags: |
