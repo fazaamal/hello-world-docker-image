@@ -1,0 +1,158 @@
+name: Build, tag and push a docker container to a registry with cache settings
+
+description: This action can build, tag and push a docker image to a registry (ghcr.io by defaults).
+
+branding:
+  icon: "upload-cloud"
+  color: "purple"
+
+inputs:
+  registry:
+    description: "Container regisry"
+    required: false
+    default: ghcr.io
+
+  username:
+    description: "Registry username"
+    required: true
+
+  password:
+    description: "Registry password"
+    required: true
+
+  image-name:
+    description: "Docker image name"
+    required: true
+
+  github-sha:
+    description: "Github sha"
+    required: true
+
+  action:
+    description: "Github action that trigerred the worflow"
+    required: true
+
+  merged:
+    description: "Flag (true/false) to tell if it is a merged PR or not"
+    required: true
+
+  build-args:
+    description: "Docker build args, newline-delimited string"
+    required: false
+
+  context:
+    description: "Build context (folder)"
+    required: false
+    default: .
+
+  cache-type:
+    description: "Cache type (either inline or local or registry or gha)"
+    required: false
+    default: local
+
+  # NEW: Multi-platform support
+  platforms:
+    description: "Comma-separated list of platforms to build for (e.g., linux/amd64,linux/arm64)"
+    required: false
+    default: "linux/amd64"
+
+outputs:
+  tags:
+    description: "Docker image tags"
+    value: ${{ steps.meta.outputs.tags }}
+
+runs:
+  using: "composite"
+  steps:
+    # NEW: Set up QEMU for cross-platform emulation
+    - name: Set up QEMU
+      if: contains(inputs.platforms, ',') || !contains(inputs.platforms, 'linux/amd64')
+      uses: docker/setup-qemu-action@v3
+      with:
+        platforms: all
+
+    - name: Set up Docker Buildx (needed for caching)
+      uses: docker/setup-buildx-action@v3 # Updated to v3
+      with:
+        # Use containerd for better ARM64 performance
+        driver-opts: |
+          image=moby/buildkit:v0.12.5
+          network=host
+
+    - name: Cache Docker layers
+      if: inputs.cache-type == 'local'
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ inputs.github-sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
+    - name: Log in to the Container registry
+      uses: docker/login-action@v3 # Updated to v3
+      with:
+        registry: ${{ inputs.registry }}
+        username: ${{ inputs.username }}
+        password: ${{ inputs.password }}
+
+    - name: Build metadata parameter
+      shell: bash
+      id: pre-meta
+      run: |
+        if [[ "${{ inputs.action }}" == "closed" && "${{ inputs.merged }}" == "true" ]]; then
+          TAG_INPUT="type=raw,value=main\ntype=sha"
+        else
+          TAG_INPUT="type=ref,event=branch\ntype=ref,event=pr\ntype=ref,event=pr,suffix=-{{sha}}\ntype=semver,pattern={{major}}\ntype=semver,pattern={{major}}.{{minor}}\ntype=semver,pattern={{major}}.{{minor}}.{{patch}}\ntype=sha"
+        fi
+        EOF=$(dd if=/dev/urandom bs=15 count=1 status=none | base64)
+        echo "tag_input<<$EOF" >> $GITHUB_OUTPUT
+        echo -e $TAG_INPUT >> $GITHUB_OUTPUT
+        echo "$EOF" >> $GITHUB_OUTPUT
+
+    - name: Build cache parameters
+      shell: bash
+      id: pre-build
+      run: |
+        if [[ "${{ inputs.cache-type }}" == "inline" ]]; then
+          CACHE_FROM=type=registry,ref=${{ inputs.registry }}/${{ inputs.image-name }}:latest
+          CACHE_TO=type=inline
+        elif [[ "${{ inputs.cache-type }}" == "local" ]]; then
+          CACHE_FROM=type=local,src=/tmp/.buildx-cache
+          CACHE_TO=type=local,dest=/tmp/.buildx-cache-new
+        elif [[ "${{ inputs.cache-type }}" == "registry" ]]; then
+          CACHE_FROM=type=registry,ref=${{ inputs.registry }}/${{ inputs.image-name }}:buildcache
+          CACHE_TO=type=registry,ref=${{ inputs.registry }}/${{ inputs.image-name }}:buildcache,mode=max
+        elif [[ "${{ inputs.cache-type }}" == "gha" ]]; then
+          CACHE_FROM=type=gha
+          CACHE_TO=type=gha,mode=max
+        fi
+        echo "cache_from=$CACHE_FROM" >> $GITHUB_OUTPUT
+        echo "cache_to=$CACHE_TO" >> $GITHUB_OUTPUT
+
+    - name: Extract metadata (tags, labels) for Docker for other cases
+      id: meta
+      uses: docker/metadata-action@v5 # Updated to v5
+      with:
+        images: ${{ inputs.registry }}/${{ inputs.image-name }}
+        tags: |
+          ${{ steps.pre-meta.outputs.tag_input }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5 # Updated to v5
+      with:
+        provenance: false
+        context: ${{ inputs.context }}
+        platforms: ${{ inputs.platforms }} # NEW: Multi-platform support
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: ${{ steps.pre-build.outputs.cache_from }}
+        cache-to: ${{ steps.pre-build.outputs.cache_to }}
+        build-args: ${{ inputs.build-args }}
+
+    - name: Move cache
+      if: inputs.cache-type == 'local'
+      shell: bash
+      run: |
+        rm -rf /tmp/.buildx-cache
+        mv /tmp/.buildx-cache-new /tmp/.buildx-cache

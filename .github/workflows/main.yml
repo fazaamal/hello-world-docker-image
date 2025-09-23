@@ -1,0 +1,158 @@
+# This is a basic workflow to help you get started with Actions
+
+# name: Push Docker GCR and release
+name: Release a new version on github
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions: write-all
+
+# this should queue the workflow run if there is already one in progress
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [22.x]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+        # Ensure version is the same as the one in the package.json of the root directory under "packageManager"
+      - uses: pnpm/action-setup@v4
+        name: Install pnpm
+        with:
+          version: 10.14.0
+          run_install: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: "pnpm"
+
+      - name: Get pnpm store directory
+        shell: bash
+        run: |
+          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+      - uses: actions/cache@v4
+        name: Setup pnpm cache
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-store-
+
+      - name: Replace first line in .npmrc
+        run: sed -i '1s|.*|shared-workspace-lockfile=true|' .npmrc
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build deed content nuxt app
+        working-directory: apps/deeds-content
+        run: |
+          pnpm build
+
+      - name: Upload sql file
+        uses: actions/upload-artifact@v4
+        with:
+          name: deeds-sql
+          path: apps/zaman-api/deeds.sql
+  release:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push'
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Semantic Release
+        uses: cycjimmy/semantic-release-action@v4
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ghcr:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download deeds sql file
+        uses: actions/download-artifact@v4
+        with:
+          name: deeds-sql
+
+      - name: Build, Tag, Push to GHCR (Multi-Platform)
+        id: ghcr
+        uses: ./.github/actions/docker-build-multiplatform
+        with:
+          username: "${{ github.actor }}"
+          password: "${{ secrets.GITHUB_TOKEN }}"
+          image-name: "zamanapp/zaman-service"
+          github-sha: "${{ github.sha }}"
+          action: "${{ github.event.action }}"
+          merged: "${{ github.event.pull_request.merged }}"
+          context: "apps/zaman-api"
+          platforms: "linux/amd64,linux/arm64"
+
+      - name: Extract and store SHA tag
+        id: extract_tag
+        run: |
+          SHA_TAG=$(echo "${{ steps.ghcr.outputs.tags }}" | sed -n '2p')
+          echo "sha_tag=$SHA_TAG" >> $GITHUB_OUTPUT
+    outputs:
+      image_tag: ${{ steps.extract_tag.outputs.sha_tag }}
+  prune:
+    runs-on: ubuntu-latest
+    needs: ghcr
+    steps:
+      - name: Prune images
+        uses: vlaurin/action-ghcr-prune@main
+        with:
+          token: ${{ secrets.PRUNE_TOKEN }}
+          organization: zamanapp
+          container: zaman-service
+          prune-tags-regexes: ^sha\-([a-f0-9]{7})
+          keep-tags: |
+            main
+          keep-last: 1
+          prune-untagged: true # prune untagged
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: ghcr
+    steps:
+      - name: Deploy new image to Dokku via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        # env:
+        #   CR_PAT: ${{ secrets.GHCR_TOKEN }}
+        #   USERNAME: ${{ github.actor }}
+        #   IMAGE_NAME: ${{ github.repository }}
+        with:
+          script: |
+            dokku git:from-image api ${{ needs.ghcr.outputs.image_tag }}
+          host: ssh.api.zaman.app
+          username: root
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          request_pty: true
