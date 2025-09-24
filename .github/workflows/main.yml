@@ -96,7 +96,6 @@ jobs:
           keep-tags: |
             main
           keep-last: 1
-          prune-untagged: true # prune untagged
           remove-multi-platform: true
 
       # After the first step finishes, then go through and delete all other untagged packages
