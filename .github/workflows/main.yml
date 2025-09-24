@@ -93,7 +93,7 @@ jobs:
           container: hello-world-express
           dry-run: false
           keep-last: 1
-          keep-tags-regexes: |
+          keep-tags: |
             main
           user: fazaamal
           prune-tags-regexes: ^sha\-([a-f0-9]{7})
