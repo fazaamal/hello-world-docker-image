@@ -91,8 +91,8 @@ jobs:
         with:
           token: ${{ secrets.PRUNE_TOKEN }}
           container: hello-world-express
-          dry-run: true
-          keep-last: 0
+          dry-run: false
+          keep-last: 1
           keep-tags-regexes: |
             main
           user: fazaamal
@@ -106,7 +106,7 @@ jobs:
         with:
           token: ${{ secrets.PRUNE_TOKEN }}
           container: hello-world-express
-          dry-run: true
+          dry-run: false
           # keep-last: 0
           user: fazaamal
           prune-untagged: true
